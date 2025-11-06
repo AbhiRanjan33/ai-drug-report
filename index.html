@@ -1,0 +1,553 @@
+<!-- <!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clinical Summary & Alerter Tool (LLM)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for better readability */
+        body {
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        }
+        h2 {
+            border-bottom: 2px solid #e5e7eb; /* tailwind gray-200 */
+            padding-bottom: 8px;
+        }
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        /* Add a style for the loading spinner */
+        .spinner {
+            border-top-color: #3498db;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+
+        <header class="mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-blue-700 mb-2">🩺 Clinical Summary & Alerter Tool (LLM)</h1>
+            <p class="text-lg text-gray-600">This tool assists medical professionals by summarizing a patient's profile and cross-referencing it with official openFDA drug data to flag potential conflicts.</p>
+        </header>
+
+        <section class="mb-8 p-6 bg-white rounded-lg shadow-md border border-gray-200">
+            <h2 class="text-2xl font-bold mb-4">Patient Profile</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="space-y-4">
+                    <div>
+                        <label for="patientVitals" class="block text-sm font-medium text-gray-700">Vitals</label>
+                        <input type="text" id="patientVitals" value="BP 152/96" placeholder="e.g., BP 152/96" class="mt-1 block w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label for="patientNotes" class="block text-sm font-medium text-gray-700">Patient Notes (Symptoms, history)</label>
+                        <textarea id="patientNotes" rows="4" placeholder="e.g., I've had a bad dry cough for weeks. History of Type 2 Diabetes." class="mt-1 block w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">hypertension for 2 years, history of asthma and diabetes, dry cough</textarea>
+                    </div>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label for="patientAllergies" class="block text-sm font-medium text-gray-700">Allergies (comma-separated)</label>
+                        <input type="text" id="patientAllergies" value="Penicillin, Ibuprofen" placeholder="e.g., Penicillin, Ibuprofen" class="mt-1 block w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label for="patientMeds" class="block text-sm font-medium text-gray-700">Other Medications (comma-separated)</label>
+                        <input type="text" id="patientMeds" value="Metformin" placeholder="e.g., Metformin, Aspirin 81mg" class="mt-1 block w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                </div>
+            </div>
+            <div class="mt-6 text-center">
+                <button id="generateReportButton" class="bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition duration-150 ease-in-out disabled:opacity-50"
+                >
+                    Generate Summary Report
+                </button>
+            </div>
+        </section>
+
+        <div id="results" class="min-h-[100px]">
+            <p class="text-gray-500 text-center">Report will appear here after you generate it.</p>
+        </div>
+
+    </div>
+
+    <script>
+        // --- Element Selectors ---
+        const generateReportButton = document.getElementById('generateReportButton');
+        const resultsDiv = document.getElementById('results');
+        
+        const patientVitalsInput = document.getElementById('patientVitals');
+        const patientNotesInput = document.getElementById('patientNotes');
+        const patientAllergiesInput = document.getElementById('patientAllergies');
+        const patientMedsInput = document.getElementById('patientMeds');
+
+        // --- Core Function (NEW) ---
+        // This function now calls our *own* backend, not openFDA.
+        async function generateSummaryReport() {
+            // 1. Get Patient Profile
+            const patientProfile = {
+                vitals: patientVitalsInput.value,
+                notes: patientNotesInput.value,
+                allergies: patientAllergiesInput.value.split(',').map(s => s.trim()).filter(Boolean),
+                meds: patientMedsInput.value.split(',').map(s => s.trim()).filter(Boolean),
+            };
+
+            // 2. Show Loading & disable button
+            showLoading();
+            generateReportButton.disabled = true;
+
+            try {
+                // 3. Call our local Python backend
+                const response = await fetch('http://127.0.0.1:5000/generate-report', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(patientProfile)
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.error || `HTTP error! status: ${response.status}`);
+                }
+
+                // 4. Get the LLM-generated reports
+                const reports = await response.json();
+
+                // 5. Display Full Report
+                displayFullReport(reports, patientProfile);
+
+            } catch (error) {
+                console.error("Error in generateSummaryReport:", error);
+                // Check if the error is a connection error
+                if (error.message.includes('Failed to fetch')) {
+                    showError("Connection Error: Could not connect to the backend server. Is your Python 'app.py' server running in your terminal?");
+                } else {
+                    showError(`An unexpected error occurred: ${error.message}`);
+                }
+            } finally {
+                // Re-enable button
+                generateReportButton.disabled = false;
+            }
+        }
+
+        // --- UI Display Functions (Modified) ---
+
+        function showLoading() {
+            resultsDiv.innerHTML = `
+                <div class="p-6 bg-white rounded-lg shadow-md border border-gray-200">
+                    <div class="flex items-center justify-center">
+                        <div class="spinner w-8 h-8 rounded-full border-4 border-gray-200 border-t-blue-600"></div>
+                        <p class="text-gray-600 ml-4">Generating full summary report...<br>Contacting backend server & LLM... (This may take 10-20 seconds)</p>
+                    </div>
+                </div>`;
+        }
+
+        function showError(message) {
+            resultsDiv.innerHTML = `<div class="p-6 bg-red-100 text-red-700 rounded-lg shadow-md border border-red-300"><p class="font-semibold">Error</p><p>${message}</p></div>`;
+        }
+
+        /**
+         * Displays the new, multi-drug report.
+         * This function now receives the alerts directly from the backend.
+         */
+        function displayFullReport(reports, profile) {
+            let reportHtml = `
+                <div class="p-6 bg-white rounded-lg shadow-md border border-gray-200">
+                    <h2 class="text-2xl font-bold mb-4">Pharmacological Summary</h2>
+                    <p class="mb-6 text-gray-700">The following is an **LLM-generated summary** checking common hypertension drug classes against the patient's profile. <strong>This is not medical advice.</strong> It is a tool for a qualified medical professional to use for review.</p>
+                    
+                    <div class="space-y-6">
+            `;
+
+            // Loop through each drug report and create a "card"
+            reports.forEach(report => {
+                // The alerts are now coming directly from the LLM-powered backend
+                const alertList = report.alerts.map(alert => {
+                    let borderColor = 'border-gray-500';
+                    if (alert.type.includes('🔴')) borderColor = 'border-red-500';
+                    else if (alert.type.includes('🟡')) borderColor = 'border-yellow-500';
+                    else if (alert.type.includes('🟠')) borderColor = 'border-orange-500';
+                    else if (alert.type.includes('🟢')) borderColor = 'border-green-500';
+
+                    // Sanitize finding to prevent HTML injection
+                    const findingText = document.createElement('div');
+                    findingText.textContent = alert.finding;
+
+                    return `<li class="p-2 bg-gray-100 border-l-4 ${borderColor}">${alert.type} <strong>${findingText.innerHTML}</strong></li>`;
+                }).join('');
+
+                const fullData = report.fullData;
+                
+                // Function to safely create preformatted text
+                const createPreText = (text) => {
+                    const pre = document.createElement('pre');
+                    pre.textContent = text || "No info.";
+                    pre.className = "bg-gray-50 p-2 rounded h-24 overflow-y-auto mt-1";
+                    
+                    // Assign colors based on section
+                    if (fullData.contraindications === text) pre.classList.add('bg-red-50', 'border', 'border-red-200');
+                    else if (fullData.warnings_and_precautions === text) pre.classList.add('bg-orange-50', 'border', 'border-orange-200');
+                    else if (fullData.drugInteractions === text) pre.classList.add('bg-yellow-50', 'border', 'border-yellow-200');
+                    else if (fullData.adverseReactions === text) pre.classList.add('bg-orange-50', 'border', 'border-orange-200');
+                    
+                    return pre.outerHTML;
+                }
+
+                reportHtml += `
+                    <div class="border border-gray-300 rounded-lg overflow-hidden">
+                        <div class="bg-gray-200 p-4">
+                            <h3 class="text-xl font-bold">${report.genericName}</h3>
+                            <p class="text-sm text-gray-600">${report.drugClass} (Brand: ${report.brandName})</p>
+                        </div>
+                        
+                        <div class="p-4">
+                            <h4 class="font-semibold mb-2">LLM-Generated Alerts for this Drug:</h4>
+                            <ul class="space-y-2">${alertList}</ul>
+                        </div>
+
+                        <details class="p-4 pt-0">
+                            <summary class="cursor-pointer text-sm text-blue-600">Show/Hide Full FDA Data (For Review)</summary>
+                            <div class="mt-4 space-y-4 text-sm">
+                                <div>
+                                    <h5 class="font-semibold text-red-700">🔴 Contraindications</h5>
+                                    ${createPreText(fullData.contraindications)}
+                                </div>
+                                <div>
+                                    <h5 class="font-semibold text-orange-700">🟠 Warnings & Precautions</h5>
+                                    ${createPreText(fullData.warnings_and_precautions)}
+                                </div>
+                                <div>
+                                    <h5 class="font-semibold text-yellow-800">🟡 Drug Interactions</h5>
+                                    ${createPreText(fullData.drugInteractions)}
+                                </div>
+                                <div>
+                                    <h5 class="font-semibold text-orange-700">🟠 Adverse Reactions</h5>
+                                    ${createPreText(fullData.adverseReactions)}
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                `;
+            });
+
+            reportHtml += `</div></div>`; // Close space-y-6 and main div
+            resultsDiv.innerHTML = reportHtml;
+        }
+
+        // --- Event Listeners ---
+        generateReportButton.addEventListener('click', generateSummaryReport);
+
+    </script>
+</body>
+</html> -->
+
+
+
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clinical Summary & Alerter Tool (LLM)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for better readability */
+        body {
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        }
+        h2 {
+            border-bottom: 2px solid #e5e7eb; /* tailwind gray-200 */
+            padding-bottom: 8px;
+        }
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        /* Add a style for the loading spinner */
+        .spinner {
+            border-top-color: #3498db;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+
+        <header class="mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-blue-700 mb-2">🩺 Clinical Summary & Alerter Tool (LLM)</h1>
+            <p class="text-lg text-gray-600">This tool assists medical professionals by summarizing a patient's profile and cross-referencing it with official openFDA drug data to flag potential conflicts.</p>
+        </header>
+
+        <section class="mb-8 p-6 bg-white rounded-lg shadow-md border border-gray-200">
+            <h2 class="text-2xl font-bold mb-4">Patient Profile</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="space-y-4">
+                    <div>
+                        <label for="patientVitals" class="block text-sm font-medium text-gray-700">Vitals</label>
+                        <input type="text" id="patientVitals" value="BP 152/96" placeholder="e.g., BP 152/96" class="mt-1 block w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label for="patientNotes" class="block text-sm font-medium text-gray-700">Patient Notes (Symptoms, history)</label>
+                        <textarea id="patientNotes" rows="4" placeholder="e.g., I've had a bad dry cough for weeks. History of Type 2 Diabetes." class="mt-1 block w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">hypertension for 2 years, history of asthma and diabetes, dry cough</textarea>
+                    </div>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label for="patientAllergies" class="block text-sm font-medium text-gray-700">Allergies (comma-separated)</label>
+                        <input type="text" id="patientAllergies" value="Penicillin, Ibuprofen" placeholder="e.g., Penicillin, Ibuprofen" class="mt-1 block w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label for="patientMeds" class="block text-sm font-medium text-gray-700">Other Medications (comma-separated)</label>
+                        <input type="text" id="patientMeds" value="Metformin" placeholder="e.g., Metformin, Aspirin 81mg" class="mt-1 block w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="mt-6 border-t pt-6">
+                <h3 class="text-lg font-semibold text-gray-800">1. Generate Default Report</h3>
+                <p class="text-sm text-gray-600 mb-3">Check the patient profile against the most common hypertension drug classes.</p>
+                <button id="generateReportButton" class="w-full bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition duration-150 ease-in-out disabled:opacity-50">
+                    Generate Main Summary Report
+                </button>
+            </div>
+
+            <div class="mt-6 border-t pt-6">
+                <h3 class="text-lg font-semibold text-gray-800">2. Check a Specific Drug</h3>
+                <p class="text-sm text-gray-600 mb-3">Check any drug name (generic or brand) against the profile above.</p>
+                <div class="flex space-x-2">
+                    <input type="text" id="customDrugName" placeholder="Enter any drug name (e.g., 'Warfarin')" class="flex-grow block w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                    <button id="checkDrugButton" class="bg-gray-600 text-white font-semibold py-2 px-5 rounded-lg shadow-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50 transition duration-150 ease-in-out disabled:opacity-50">
+                        Check Drug
+                    </button>
+                </div>
+                <div id="custom-drug-results" class="mt-4 space-y-4"></div>
+            </div>
+        </section>
+
+        <div id="results-header" class="hidden">
+            <h2 class="text-2xl font-bold mb-4">Pharmacological Summary</h2>
+            <p class="mb-6 text-gray-700">The following is an **LLM-generated summary** checking common hypertension drug classes against the patient's profile. <strong>This is not medical advice.</strong> It is a tool for a qualified medical professional to use for review.</p>
+        </div>
+        <div id="main-results" class="min-h-[50px] space-y-6">
+            </div>
+
+    </div>
+
+    <script>
+        // --- Element Selectors ---
+        const generateReportButton = document.getElementById('generateReportButton');
+        const checkDrugButton = document.getElementById('checkDrugButton');
+        const customDrugNameInput = document.getElementById('customDrugName');
+        
+        const mainResultsDiv = document.getElementById('main-results');
+        const customResultsDiv = document.getElementById('custom-drug-results');
+        const resultsHeader = document.getElementById('results-header');
+        
+        const patientVitalsInput = document.getElementById('patientVitals');
+        const patientNotesInput = document.getElementById('patientNotes');
+        const patientAllergiesInput = document.getElementById('patientAllergies');
+        const patientMedsInput = document.getElementById('patientMeds');
+
+        // --- Helper Function to get profile ---
+        function getPatientProfile() {
+            return {
+                vitals: patientVitalsInput.value,
+                notes: patientNotesInput.value,
+                allergies: patientAllergiesInput.value.split(',').map(s => s.trim()).filter(Boolean),
+                meds: patientMedsInput.value.split(',').map(s => s.trim()).filter(Boolean),
+            };
+        }
+
+        // --- Main Report Function ---
+        async function generateSummaryReport() {
+            const patientProfile = getPatientProfile();
+
+            // Show Loading
+            mainResultsDiv.innerHTML = getLoadingHTML("Generating full summary report...", "This may take 10-20 seconds");
+            resultsHeader.classList.remove('hidden');
+            customResultsDiv.innerHTML = ""; // Clear custom results
+            generateReportButton.disabled = true;
+            checkDrugButton.disabled = true; // Disable both buttons
+
+            try {
+                const response = await fetch('http://127.0.0.1:5000/generate-report', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(patientProfile)
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.error || `HTTP error! status: ${response.status}`);
+                }
+
+                const reports = await response.json();
+                displayFullReport(reports);
+
+            } catch (error) {
+                console.error("Error in generateSummaryReport:", error);
+                showError(error.message, mainResultsDiv);
+            } finally {
+                generateReportButton.disabled = false;
+                checkDrugButton.disabled = false;
+            }
+        }
+
+        // --- NEW: Single Drug Check Function ---
+        async function checkSingleDrug() {
+            const patientProfile = getPatientProfile();
+            const drugName = customDrugNameInput.value.trim();
+
+            if (!drugName) {
+                alert("Please enter a drug name to check.");
+                return;
+            }
+
+            // Show loading in the *custom* results div
+            customResultsDiv.innerHTML = getLoadingHTML(`Checking ${drugName}...`, "Contacting backend...");
+            generateReportButton.disabled = true;
+            checkDrugButton.disabled = true;
+
+            try {
+                const response = await fetch('http://127.0.0.1:5000/check-drug', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ profile: patientProfile, drugName: drugName })
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.error || `HTTP error! status: ${response.status}`);
+                }
+
+                const report = await response.json();
+                
+                // Create the new card and *prepend* it to the custom results
+                const cardHTML = createReportCardHTML(report);
+                customResultsDiv.innerHTML = ""; // Clear loading
+                customResultsDiv.insertAdjacentHTML('afterbegin', cardHTML); // Add new card to top
+                customDrugNameInput.value = ""; // Clear input
+
+            } catch (error) {
+                console.error("Error in checkSingleDrug:", error);
+                showError(error.message, customResultsDiv);
+            } finally {
+                generateReportButton.disabled = false;
+                checkDrugButton.disabled = false;
+            }
+        }
+
+        // --- UI Display Functions ---
+
+        function getLoadingHTML(title, subtitle) {
+            return `
+                <div class="p-6 bg-white rounded-lg shadow-md border border-gray-200">
+                    <div class="flex items-center justify-center">
+                        <div class="spinner w-8 h-8 rounded-full border-4 border-gray-200 border-t-blue-600"></div>
+                        <p class="text-gray-600 ml-4">${title}<br>${subtitle}</p>
+                    </div>
+                </div>`;
+        }
+
+        function showError(message, targetDiv) {
+            let errorMessage = message;
+            if (message.includes('Failed to fetch')) {
+                errorMessage = "Connection Error: Could not connect to the backend server. Is your Python 'app.py' server running?";
+            }
+            targetDiv.innerHTML = `<div class="p-6 bg-red-100 text-red-700 rounded-lg shadow-md border border-red-300"><p class="font-semibold">Error</p><p>${errorMessage}</p></div>`;
+        }
+
+        /**
+         * Renders the main report (list of cards)
+         */
+        function displayFullReport(reports) {
+            resultsHeader.classList.remove('hidden');
+            let reportHtml = reports.map(createReportCardHTML).join('');
+            mainResultsDiv.innerHTML = reportHtml;
+        }
+
+        /**
+         * REFACTORED: Creates the HTML for a single drug card.
+         * This is now used by both the main report and the custom check.
+         */
+        function createReportCardHTML(report) {
+            const alertList = report.alerts.map(alert => {
+                let borderColor = 'border-gray-500';
+                if (alert.type.includes('🔴')) borderColor = 'border-red-500';
+                else if (alert.type.includes('🟡')) borderColor = 'border-yellow-500';
+                else if (alert.type.includes('🟠')) borderColor = 'border-orange-500';
+                else if (alert.type.includes('🟢')) borderColor = 'border-green-500';
+
+                // Sanitize finding to prevent HTML injection
+                const findingText = document.createElement('div');
+                findingText.textContent = alert.finding;
+
+                return `<li class="p-2 bg-gray-100 border-l-4 ${borderColor}">${alert.type} <strong>${findingText.innerHTML}</strong></li>`;
+            }).join('');
+
+            const fullData = report.fullData;
+            
+            const createPreText = (text) => {
+                const pre = document.createElement('pre');
+                pre.textContent = text || "No info.";
+                pre.className = "bg-gray-50 p-2 rounded h-24 overflow-y-auto mt-1";
+                
+                if (fullData.contraindications === text) pre.classList.add('bg-red-50', 'border', 'border-red-200');
+                else if (fullData.warnings_and_precautions === text) pre.classList.add('bg-orange-50', 'border', 'border-orange-200');
+                else if (fullData.drugInteractions === text) pre.classList.add('bg-yellow-50', 'border', 'border-yellow-200');
+                else if (fullData.adverseReactions === text) pre.classList.add('bg-orange-50', 'border', 'border-orange-200');
+                
+                return pre.outerHTML;
+            }
+
+            return `
+                <div class="border border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
+                    <div class="bg-gray-200 p-4">
+                        <h3 class="text-xl font-bold">${report.genericName}</h3>
+                        <p class="text-sm text-gray-600">${report.drugClass} (Brand: ${report.brandName})</p>
+                    </div>
+                    
+                    <div class="p-4">
+                        <h4 class="font-semibold mb-2">LLM-Generated Alerts for this Drug:</h4>
+                        <ul class="space-y-2">${alertList}</ul>
+                    </div>
+
+                    <details class="p-4 pt-0">
+                        <summary class="cursor-pointer text-sm text-blue-600">Show/Hide Full FDA Data (For Review)</summary>
+                        <div class="mt-4 space-y-4 text-sm">
+                            <div>
+                                <h5 class="font-semibold text-red-700">🔴 Contraindications</h5>
+                                ${createPreText(fullData.contraindications)}
+                            </div>
+                            <div>
+                                <h5 class="font-semibold text-orange-700">🟠 Warnings & Precautions</h5>
+                                ${createPreText(fullData.warnings_and_precautions)}
+                            </div>
+                            <div>
+                                <h5 class="font-semibold text-yellow-800">🟡 Drug Interactions</h5>
+                                ${createPreText(fullData.drugInteractions)}
+                            </div>
+                            <div>
+                                <h5 class="font-semibold text-orange-700">🟠 Adverse Reactions</h5>
+                                ${createPreText(fullData.adverseReactions)}
+                            </div>
+                        </div>
+                    </details>
+                </div>
+            `;
+        }
+
+        // --- Event Listeners ---
+        generateReportButton.addEventListener('click', generateSummaryReport);
+        checkDrugButton.addEventListener('click', checkSingleDrug);
+
+    </script>
+</body>
+</html>
